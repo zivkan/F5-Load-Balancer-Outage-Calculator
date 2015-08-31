@@ -25,16 +25,98 @@ namespace OutageCalculator
 
             var f5logs = GetLogRows(rows);
             var events = f5logs.Select(ConvertToEventInfo);
-            var eventsPerHost = events.GroupBy(e => e.Host).ToList();
-            var downtimePerHost =
-                eventsPerHost.Select(
-                    e => new KeyValuePair<IPAddress, IEnumerable<DowntimeEvent>>(e.Key, CalculateHostDowntime(e))).ToList();
-            var downtimeEvents = FindDowntimeEvents(downtimePerHost);
+            var eventsPerHost =
+                events.GroupBy(e => e.Host)
+                    .ToDictionary<IGrouping<IPAddress, EventInfo>, IPAddress, IEnumerable<EventInfo>>(e => e.Key, e => e);
+            List<KeyValuePair<IPAddress, IEnumerable<DowntimeEvent>>> downTimePerHost = new List<KeyValuePair<IPAddress, IEnumerable<DowntimeEvent>>>();
+            foreach (var hostGrouping in eventsPerHost)
+            {
+                var eventsWithImputation = ImputeMissingEvents(hostGrouping.Value).ToList();
+                var downTime = CalculateHostDowntime(eventsWithImputation);
+                downTimePerHost.Add(new KeyValuePair<IPAddress, IEnumerable<DowntimeEvent>>(hostGrouping.Key, downTime));
+            }
+            var downtimeEvents = FindDowntimeEvents(downTimePerHost);
 
             foreach (var downtime in downtimeEvents)
             {
                 Console.WriteLine("Down from {0} to {1} ({2})", downtime.Start, downtime.End,
                     downtime.End - downtime.Start);
+            }
+        }
+
+        private static IEnumerable<EventInfo> ImputeMissingEvents(IEnumerable<EventInfo> events)
+        {
+            var sortedEvents = events.ToList();
+            sortedEvents.Sort((event1, event2) => event1.When.CompareTo(event2.When));
+
+            var enumerator = sortedEvents.GetEnumerator();
+            if (!enumerator.MoveNext())
+            {
+                yield break;
+            }
+
+            yield return enumerator.Current;
+            var isUp = enumerator.Current.Up;
+
+            while (enumerator.MoveNext())
+            {
+                if (isUp == enumerator.Current.Up)
+                { 
+                    // impute
+                    var startTime = enumerator.Current.When;
+                    var timeSpanSegments = enumerator.Current.timeSpanMessage.Split(':');
+                    foreach (var segment in timeSpanSegments)
+                    {
+                        if (segment.EndsWith("hr", StringComparison.CurrentCultureIgnoreCase))
+                        {
+                            var duration = int.Parse(segment.Substring(0, segment.Length - 2));
+                            startTime = startTime.AddHours(-duration);
+                        }
+                        else if (segment.EndsWith("hrs", StringComparison.CurrentCultureIgnoreCase))
+                        {
+                            var duration = int.Parse(segment.Substring(0, segment.Length - 3));
+                            startTime = startTime.AddHours(-duration);
+                        }
+                        else if (segment.EndsWith("min", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var duration = int.Parse(segment.Substring(0, segment.Length - 3));
+                            startTime = startTime.AddMinutes(-duration);
+                        }
+                        else if (segment.EndsWith("mins", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var duration = int.Parse(segment.Substring(0, segment.Length - 4));
+                            startTime = startTime.AddMinutes(-duration);
+                        }
+                        else if (segment.EndsWith("sec", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var duration = int.Parse(segment.Substring(0, segment.Length - 3));
+                            startTime = startTime.AddSeconds(-duration);
+                        }
+                        else if (segment.EndsWith("secs", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var duration = int.Parse(segment.Substring(0, segment.Length - 4));
+                            startTime = startTime.AddSeconds(-duration);
+                        }
+                        else
+                        {
+                            throw new Exception("Unknown time segment '" + segment + "'");
+                        }
+                    }
+
+                    var imputed = new EventInfo()
+                    {
+                        timeSpanMessage = "imputed",
+                        Up = !isUp,
+                        When = startTime,
+                        Host = enumerator.Current.Host
+                    };
+                    var upOrDown = imputed.Up ? "up" : "down";
+                    Console.WriteLine("Imputed " + upOrDown + " event for " + imputed.Host + " at " +
+                                      imputed.When.ToString("yyyy-MM-dd hh:mm:ss"));
+                    yield return imputed;
+                }
+                yield return enumerator.Current;
+                isUp = enumerator.Current.Up;
             }
         }
 
@@ -89,7 +171,7 @@ namespace OutageCalculator
             }
         }
 
-        private static IEnumerable<DowntimeEvent> CalculateHostDowntime(IGrouping<IPAddress, EventInfo> arg)
+        private static IEnumerable<DowntimeEvent> CalculateHostDowntime(IEnumerable<EventInfo> arg)
         {
             var events = arg.ToList();
             events.Sort((e1, e2) => e1.When.CompareTo(e2.When));
@@ -225,11 +307,18 @@ namespace OutageCalculator
                 throw new Exception(String.Format("Could not parse '{0}' as an IP address on line {1}", ipAddressString,
                     row.RowNumber));
             }
+
+            const string forString = " for ";
+            var timeSpanMessageStart = row.TrapDetails.IndexOf(forString, StringComparison.OrdinalIgnoreCase) + forString.Length;
+            var timeSpanMessageEnd = row.TrapDetails.IndexOf(" ]", timeSpanMessageStart, StringComparison.OrdinalIgnoreCase);
+            var timeSpanMessage = row.TrapDetails.Substring(timeSpanMessageStart, timeSpanMessageEnd - timeSpanMessageStart);
+
             return new EventInfo()
             {
                 Host = ipAddress,
                 Up = up,
-                When = row.TrapTime
+                When = row.TrapTime,
+                timeSpanMessage = timeSpanMessage
             };
         }
 

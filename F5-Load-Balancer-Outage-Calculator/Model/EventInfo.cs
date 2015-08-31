@@ -8,5 +8,6 @@ namespace OutageCalculator.Model
         public IPAddress Host { get; set; }
         public bool Up { get; set; }
         public DateTime When { get; set; }
+        public string timeSpanMessage { get; set; }
     }
 }
