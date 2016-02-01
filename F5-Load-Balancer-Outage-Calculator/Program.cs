@@ -37,9 +37,10 @@ namespace OutageCalculator
             }
             var downtimeEvents = FindDowntimeEvents(downTimePerHost);
 
+            Console.WriteLine("\"{0}\",\"{1}\",\"{2}\"", "Start", "End", "Duration");
             foreach (var downtime in downtimeEvents)
             {
-                Console.WriteLine("Down from {0} to {1} ({2})", downtime.Start, downtime.End,
+                Console.WriteLine("\"{0:yyyy-MM-dd hh:mm:ss}\",\"{1:yyyy-MM-dd hh:mm:ss}\",\"{2}\"", downtime.Start, downtime.End,
                     downtime.End - downtime.Start);
             }
         }
@@ -111,8 +112,8 @@ namespace OutageCalculator
                         Host = enumerator.Current.Host
                     };
                     var upOrDown = imputed.Up ? "up" : "down";
-                    Console.WriteLine("Imputed " + upOrDown + " event for " + imputed.Host + " at " +
-                                      imputed.When.ToString("yyyy-MM-dd hh:mm:ss"));
+                    Console.Error.WriteLine("Imputed " + upOrDown + " event for " + imputed.Host + " at " +
+                                            imputed.When.ToString("yyyy-MM-dd hh:mm:ss"));
                     yield return imputed;
                 }
                 yield return enumerator.Current;
